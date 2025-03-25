@@ -1,0 +1,65 @@
+name: gpu-${PROJECT_NAME_ENV}
+services:
+  core0:
+    deploy:
+      resources:
+        limits:
+        # 最大値
+          cpus: "20"
+          memory: 700g
+        reservations:
+        # 最低限確保
+          cpus: "10"
+          memory: 500g
+          devices:
+            - driver: nvidia
+              device_ids: ["0"]
+              capabilities: [gpu]
+    build:
+      args:
+        - BASE_IMAGE=nvidia/cuda:11.0.3-devel-ubuntu20.04
+        - PYTHON_VERSION=3.12
+        - UID=1023
+        - GID=1023
+        - PROJECT_NAME=${PROJECT_NAME_ENV}
+      context: ../../
+      dockerfile: environments/Dockerfile
+    shm_size: "16gb"
+    # env_file:
+    #   - ../envs.env
+    tty: true
+    volumes:
+        - ../../:/home/challenger/${PROJECT_NAME_ENV}
+        - /data3/hina/imagenet_all:/home/challenger/overcomplete/data/imagenet
+
+  core1:
+    deploy:
+      resources:
+        limits:
+        # 最大値
+          cpus: "20"
+          memory: 700g
+        reservations:
+        # 最低限確保
+          cpus: "10"
+          memory: 500g
+          devices:
+            - driver: nvidia
+              device_ids: ["1"]
+              capabilities: [gpu]
+    build:
+      args:
+        - BASE_IMAGE=nvidia/cuda:11.0.3-devel-ubuntu20.04
+        - PYTHON_VERSION=3.12
+        - UID=1023
+        - GID=1023
+        - PROJECT_NAME=${PROJECT_NAME_ENV}
+      context: ../../
+      dockerfile: environments/Dockerfile
+    shm_size: "16gb"
+    # env_file:
+    #   - ../envs.env
+    tty: true
+    volumes:
+        - ../../:/home/challenger/${PROJECT_NAME_ENV}
+        - /data3/hina/imagenet_all:/home/challenger/overcomplete/data/imagenet
