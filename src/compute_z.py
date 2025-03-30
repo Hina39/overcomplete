@@ -1,3 +1,4 @@
+import argparse
 import pathlib
 from multiprocessing import Pool
 
@@ -90,6 +91,12 @@ def select_patch_from_activations(activations, patch_index):
 
 # --- 使用例 ---
 if __name__ == '__main__':
+    # argparseでコマンドライン引数をパースするよ😉
+    parser = argparse.ArgumentParser(description="Compute Z for all images 😎")
+    parser.add_argument("--images_per_class", type=int, default=10,
+                        help="各クラスから使用する画像の枚数 🚀")
+    args = parser.parse_args()
+    images_per_class = args.images_per_class
 
     # デバイス設定（GPUが使える場合は 'cuda'）
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -131,7 +138,8 @@ if __name__ == '__main__':
             continue  # サンプルがなければスキップ！
         
         # 該当クラスのSubsetを作成してデータローダーを用意
-        subset = torch.utils.data.Subset(dataset, indices[:20])
+        # images_per_classの数だけサンプルを使うよ🚀
+        subset = torch.utils.data.Subset(dataset, indices[:images_per_class])
         subset_loader = DataLoader(subset, batch_size=128, shuffle=False, num_workers=4, pin_memory=True)
         
         images_list = []
