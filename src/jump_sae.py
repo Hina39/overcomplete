@@ -7,7 +7,7 @@ from einops import rearrange
 # https://github.com/KempnerInstitute/overcomplete/blob/main/overcomplete/sae/topk_sae.py#L11
 from overcomplete.metrics import r2_score
 from overcomplete.models import DinoV2, ResNet
-from overcomplete.sae import TopKSAE, train_sae
+from overcomplete.sae import JumpSAE, train_sae
 from torch.utils.data import DataLoader, TensorDataset
 from torchvision import datasets, transforms
 from torchvision.transforms import Compose
@@ -67,18 +67,24 @@ for class_name, class_idx in tqdm(dataset.class_to_idx.items()):
     Activations = rearrange(activations, 'n c h w -> (n h w) c')
     print(f"クラス {class_name}: Activations shape = {Activations.shape} 😄")
 
-    sae = TopKSAE(Activations.shape[-1], nb_concepts=10, top_k=2, device='cuda')
+    sae = JumpSAE(Activations.shape[-1], nb_concepts=10, bandwith=1e-2, kernel='silverman', device='cuda')
 
     dataloader = torch.utils.data.DataLoader(TensorDataset(Activations), batch_size=1024, shuffle=True)
-    optimizer = torch.optim.Adam(sae.parameters(), lr=5e-4)
+    optimizer = torch.optim.Adam(sae.parameters(), lr=3e-3)
 
+    desired_sparsity = 0.10
     def criterion(x, x_hat, pre_codes, codes, dictionary):
-        """saeの損失関数."""
-        mse = (x - x_hat).square().mean()
-        return mse
+        # here we directly use the thresholds of the model to control the sparsity
+        loss = (x - x_hat).square().mean()
+
+        sparsity = (codes > 0).float().mean().detach()
+        if sparsity > desired_sparsity:
+            # if we are not sparse enough, increase the thresholds levels
+            loss -= sae.thresholds.sum()
+
+        return loss
 
     logs = train_sae(sae, dataloader, criterion, optimizer, nb_epochs=20, device='cuda')
-    # print(logs)
 
     sae = sae.eval()
     with torch.no_grad():
@@ -127,13 +133,13 @@ for class_name, class_idx in tqdm(dataset.class_to_idx.items()):
     print("Reconstruction Accuracy (NNLS):", reconstruction_accuracy)
 
     # reconstruction_accuracy と class_name を log に保存するぜ！
-    with open("outputs/topk_sae/Reconstruction_Accuracy_epoch_20_log_4_4.txt", "a") as f:
+    with open("outputs/jump_sae/Reconstruction_Accuracy_epoch_20_log_4_4.txt", "a") as f:
         f.write(f"{class_name}: Reconstruction Accuracy: {reconstruction_accuracy}\n")
 
-np.savez("outputs/topk_sae/epoch_20_z_dict.npz", **z_dict) # 辞書を保存
+np.savez("outputs/jump_sae/epoch_20_z_dict.npz", **z_dict) # 辞書を保存
 
 dictionary_all_cat = torch.cat(dictionary_all, dim=0)  # 辞書は横方向に連結する場合
-np.savez("outputs/topk_sae/epoch_20_dictionary.npz", dictionary_all_cat.cpu().detach().numpy())
+np.savez("outputs/jump_sae/epoch_20_dictionary.npz", dictionary_all_cat.cpu().detach().numpy())
 print(dictionary_all_cat.shape)
 print("Finish!🤩")
 

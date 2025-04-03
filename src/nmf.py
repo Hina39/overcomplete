@@ -5,6 +5,7 @@ import torch
 from einops import rearrange
 from overcomplete.models import DinoV2, ResNet
 from overcomplete.optimization import NMF, ConvexNMF, SemiNMF
+from scipy.optimize import nnls  # NNLSによる係数抽出のため
 from torch.utils.data import DataLoader, TensorDataset
 from torchvision import datasets, transforms
 from torchvision.transforms import Compose
@@ -36,9 +37,13 @@ dataset = datasets.ImageFolder(
 )
 
 model = ResNet(device='cuda')
+# print("Model Keys:")
+# print(list(model.model.state_dict().keys()))
+# print(model.model) # torch.Size([1000, 2048])
 
 z_dict = {}
 dictionary_all = []
+all_acc = []
 for class_name, class_idx in tqdm(dataset.class_to_idx.items()):
     # 指定クラスのサンプルのインデックスを収集する
     indices = [i for i, (_, target) in enumerate(dataset.samples) if target == class_idx]
@@ -64,59 +69,52 @@ for class_name, class_idx in tqdm(dataset.class_to_idx.items()):
     print(f"クラス {class_name}: Activations shape = {Activations.shape} 😄")
 
     nmf = NMF(nb_concepts=10, solver='hals', device='cuda', verbose=True)
-    Z, D = nmf.fit(torch.relu(Activations))
+    Z, D = nmf.fit(torch.relu(Activations), max_iter=1000)
 
     print(Z.shape, D.shape) # torch.Size([15680, 10]) # torch.Size([10, 2048])
 
+    D_np = D.cpu().detach().numpy()  # D_np: shape (10, 2048)
+
+    reconstructed = []
+    if len(activations.shape) == 4:
+        orig_act = torch.mean(activations, dim=(2, 3))
+    orig_act_np = orig_act.cpu().detach().numpy()
+    for i in range(orig_act_np.shape[0]):
+        # D_np.T の shape は (2048, 10)、act の shape は (2048,)
+        u_i, _ = nnls(D_np.T, orig_act_np[i])
+        rec_i = np.dot(u_i, D_np)  # 再構成: rec_i = u_i * D_np, shape = (2048,)
+        reconstructed.append(rec_i)
+    reconstructed = np.array(reconstructed)
+
+    # latent_to_logitを使って予測を取得して、再構成前後でどれだけ一致するかチェックするぜ！
+    # numpy配列をtorch.Tensorに変換してデバイスに移すぜ！
+    orig_act_tensor = torch.from_numpy(orig_act_np).to(device).float()
+    reconstructed_tensor = torch.from_numpy(reconstructed).to(device).float()
+
+    # # ここでunsqueezeして、conv2dが処理できる形に変換するぜ！
+    orig_act_tensor = orig_act_tensor.unsqueeze(-1).unsqueeze(-1)         # [N, C, 1, 1]
+    reconstructed_tensor = reconstructed_tensor.unsqueeze(-1).unsqueeze(-1)   # [N, C, 1, 1]
+
+    preds_orig = torch.argmax(model.model.head.fc(orig_act_tensor), dim=1).cpu().numpy()
+    preds_rec = torch.argmax(model.model.head.fc(reconstructed_tensor), dim=1).cpu().numpy()
+
+    reconstruction_accuracy = np.mean(preds_orig == preds_rec)
+    print("Reconstruction Accuracy (NNLS):", reconstruction_accuracy)
+
+    # reconstruction_accuracy と class_name を log に保存するぜ！
+    with open("outputs/nmf/Reconstruction_Accuracy_log_4_4.txt", "a") as f:
+        f.write(f"{class_name}: Reconstruction Accuracy: {reconstruction_accuracy}\n")
+
     z_dict[class_name] = Z.cpu().detach().numpy()
     dictionary_all.append(D)
+    all_acc.append(reconstruction_accuracy)
 
-np.savez("outputs/nmf/z_dict.npz", **z_dict) # 辞書を保存
+np.savez("outputs/nmf/z_dict_ResNet.npz", **z_dict) # 辞書を保存
 
 dictionary_all_cat = torch.cat(dictionary_all, dim=0)  # 辞書は横方向に連結する場合
-np.savez("outputs/nmf/dictionary.npz", dictionary_all_cat.cpu().detach().numpy())
+np.savez("outputs/nmf/dictionary_ResNet.npz", dictionary_all_cat.cpu().detach().numpy())
 print(dictionary_all_cat.shape)
+all_acc_mean = sum(np.array(all_acc)) / 1000
+np.savez("output/nmf/reconstruction_accuracies_ResNet.npz", accuracies=all_acc_mean)
+print("Reconstruction accuracies:", all_acc_mean)
 print("Finish!🤩")
-
-
-
-"""
-ここから下はクラスごとの計算を考慮しない場合のコード
-"""
-
-# dataloader = DataLoader(
-#     dataset,
-#     batch_size=128,
-#     shuffle=False,
-#     num_workers=4,
-#     pin_memory=True,
-# )
-
-# model = ResNet(device='cuda')
-# # to_pil = transforms.ToPILImage()
-
-# images = []
-# for i, (image, _) in enumerate(dataloader):
-#     if i == 10:
-#         break
-#     print(image.shape)
-#     images.append(image)
-
-# images = torch.cat(images, dim=0).cuda()  # concatenate along batch dimension
-# print(images.shape)
-
-# # ok then forward and flatten to get the tokens
-# Activations = model.forward_features(images)
-# print(Activations.shape)
-
-# # DinoV2
-# #  Activations = rearrange(Activations, 'n t d -> (n t) d')
-
-# # ResNet
-# Activations = rearrange(Activations, 'n c h w -> (n h w) c')
-# print(Activations.shape)
-
-# nmf = NMF(nb_concepts=10, solver='hals', device='cuda', verbose=True)
-# Z, D = nmf.fit(torch.relu(Activations))
-
-# print(Z.shape, D.shape) # torch.Size([15680, 10]) # torch.Size([10, 2048])
